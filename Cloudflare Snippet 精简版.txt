@@ -1,0 +1,55 @@
+import { connect as c } from "cloudflare:sockets";
+
+let U = ""; // UUID
+let P = ""; // 反代IP
+
+export default {
+  async fetch(r) {
+    if (r.headers.get("Upgrade") === "websocket") {
+      P = r.url.match(/ip=([^&]+)/)?.[1] || P;
+      const [cli, ws] = Object.values(new WebSocketPair());
+      ws.accept(); ws.send(new Uint8Array([0, 0]));
+      t(ws);
+      return new Response(null, { status: 101, webSocket: cli });
+    }
+    return new Response("OK", { status: 200 });
+  }
+};
+
+async function t(ws, tcp) {
+  let f = false, q = Promise.resolve(), w, r;
+  try {
+    ws.addEventListener("message", async e => {
+      if (!f) { f = true; q = q.then(() => h(e.data)); }
+      else { q = q.then(() => w.write(e.data)); }
+    });
+
+    async function h(d) {
+      const u = new Uint8Array(d);
+      const x = (a, i = 0) => [...a.slice(i, i + 16)].map(b => b.toString(16).padStart(2, "0")).join("").replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5");
+      if (x(u.slice(1, 17)) !== U) throw "UUID!";
+      const pi = 18 + u[17] + 1, pt = new DataView(u.buffer, pi, 2).getUint16(0);
+      let ai = pi + 2, at = u[ai++], ad;
+      if (at === 1) ad = u.slice(ai, ai + 4).join(".");
+      else if (at === 2) { const l = u[ai]; ad = new TextDecoder().decode(u.slice(ai + 1, ai + 1 + l)); ai++; }
+      else if (at === 3) { const dv = new DataView(u.buffer, ai, 16); ad = Array.from({ length: 8 }, (_, i) => dv.getUint16(i * 2).toString(16)).join(":"); }
+      else throw "BADADDR";
+
+      try { tcp = c({ hostname: ad, port: pt }); await tcp.opened; }
+      catch { if (!P) throw "FAIL"; const [ip, p = 443] = P.split(":"); tcp = c({ hostname: ip, port: +p }); await tcp.opened; }
+
+      w = tcp.writable.getWriter(); r = tcp.readable.getReader();
+      const b = u.slice(ai + (at === 2 ? u[ai - 1] : at === 1 ? 4 : 16));
+      if (b.length) await w.write(b);
+      k();
+    }
+
+    async function k() {
+      while (1) {
+        await q; const { done, value } = await r.read();
+        if (value?.length) q = q.then(() => ws.send(value));
+        if (done) break;
+      }
+    }
+  } catch { try { await tcp?.close(); } catch {} ws.close?.(); }
+}
